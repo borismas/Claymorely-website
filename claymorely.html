@@ -1,0 +1,1280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>claymorely — terminal</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --green:      #39ff14;
+    --green-dim:  #22a000;
+    --green-fade: #145c00;
+    --bg:         #0a0a0a;
+    --bg2:        #111411;
+    --cursor:     #39ff14;
+  }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--bg);
+    color: var(--green);
+    font-family: 'JetBrains Mono', 'Courier New', monospace;
+    font-size: 14px;
+    line-height: 1.7;
+    min-height: 100vh;
+    padding: 2rem 1.5rem 4rem;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      to bottom,
+      transparent 0px, transparent 3px,
+      rgba(0,0,0,0.08) 3px, rgba(0,0,0,0.08) 4px
+    );
+    pointer-events: none;
+    z-index: 999;
+  }
+
+  .terminal { max-width: 680px; margin: 0 auto; }
+
+  .window-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: var(--bg2);
+    border: 1px solid var(--green-fade);
+    border-bottom: none;
+    padding: 0.5rem 1rem;
+    border-radius: 6px 6px 0 0;
+  }
+
+  .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .dot.r { background: #ff5f57; }
+  .dot.y { background: #febc2e; }
+  .dot.g { background: #28c840; }
+
+  .window-title {
+    margin-left: auto; margin-right: auto;
+    font-size: 12px; color: var(--green-dim); letter-spacing: 0.05em;
+  }
+
+  .pane {
+    border: 1px solid var(--green-fade);
+    background: var(--bg);
+    padding: 1.8rem 2rem 2rem;
+    border-radius: 0 0 6px 6px;
+    cursor: text;
+  }
+
+  /* static content */
+  .static-content {}
+
+  .cmd-line { margin-top: 1.6rem; }
+  .cmd-line:first-child { margin-top: 0; }
+  .output { margin-top: 0.4rem; }
+  .whoami-value { color: var(--green); font-size: 1.05em; }
+  .bio { color: #c8f5b0; font-size: 13px; line-height: 1.85; max-width: 58ch; }
+
+  .ls-grid { display: flex; flex-wrap: wrap; gap: 0.6rem 2rem; margin-top: 0.5rem; }
+  .ls-item { display: flex; align-items: center; gap: 0.5rem; }
+  .ls-item a {
+    color: var(--green); text-decoration: none;
+    border-bottom: 1px solid var(--green-fade);
+    transition: color 0.15s, border-color 0.15s; font-weight: 700;
+  }
+  .ls-item a:hover { color: #fff; border-color: #fff; }
+  .ls-icon { color: var(--green-dim); font-size: 12px; }
+
+  .status-row { display: flex; align-items: center; gap: 0.7rem; }
+  .status-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--green); box-shadow: 0 0 6px var(--green);
+    animation: pulse 2.2s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.35} }
+
+  .divider { border: none; border-top: 1px solid var(--green-fade); margin: 1.8rem 0 0; }
+  .comment { color: var(--green-dim); font-size: 12px; }
+
+  /* ── interactive terminal area ── */
+  #terminal-output {
+    margin-top: 1.6rem;
+  }
+
+  .hist-line { margin-top: 0.6rem; }
+  .hist-line:first-child { margin-top: 0; }
+
+  .hist-prompt { color: var(--green-dim); }
+  .hist-prompt .u { color: var(--green); font-weight:700; }
+  .hist-prompt .h { color: var(--green); }
+  .hist-response { color: #c8f5b0; font-size: 13px; white-space: pre-wrap; margin-top: 0.2rem; }
+  .hist-response.err { color: #ff6b6b; }
+  .hist-response.sys { color: var(--green-dim); }
+
+  /* live input row */
+  #input-row {
+    display: flex;
+    align-items: center;
+    margin-top: 0.8rem;
+    flex-wrap: nowrap;
+  }
+  #input-prompt { color: var(--green-dim); white-space: nowrap; flex-shrink: 0; }
+  #input-prompt .u { color: var(--green); font-weight:700; }
+  #input-prompt .h { color: var(--green); }
+
+  #input-field {
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--green);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    flex: 1;
+    caret-color: var(--green);
+    min-width: 0;
+  }
+
+  /* blinking cursor when input not focused */
+  .cursor {
+    display: inline-block;
+    width: 9px; height: 15px;
+    background: var(--cursor);
+    vertical-align: text-bottom;
+    animation: blink 1s step-end infinite;
+    margin-left: 2px;
+  }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+  /* ── Game overlay (shared) ── */
+  #game-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.93);
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 0.8rem;
+  }
+  #game-overlay.active { display: flex; }
+
+  #game-header {
+    font-size: 13px;
+    color: var(--green-dim);
+    text-align: center;
+    line-height: 1.8;
+  }
+  #game-header span { color: var(--green); font-weight:700; }
+
+  #game-canvas {
+    border: 1px solid var(--green-fade);
+    image-rendering: pixelated;
+    display: block;
+  }
+
+  #game-footer {
+    font-size: 12px;
+    color: var(--green-dim);
+    text-align: center;
+  }
+  #game-footer span { color: var(--green); }
+
+  #game-score-display {
+    font-size: 13px;
+    color: var(--green);
+    text-align: center;
+    min-height: 1.4em;
+  }
+
+  .mobile-controls {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    margin-top: 0.3rem;
+  }
+  .mobile-row { display: flex; gap: 4px; }
+  .dpad {
+    width: 44px; height: 44px;
+    background: var(--bg2);
+    border: 1px solid var(--green-fade);
+    color: var(--green);
+    font-size: 18px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 4px;
+    cursor: pointer;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .dpad:active { background: var(--green-fade); }
+
+  @media (max-width: 520px) {
+    body { padding: 1rem 0.75rem 3rem; }
+    .pane { padding: 1.2rem 1rem 1.4rem; }
+    .ls-grid { gap: 0.5rem 1.2rem; }
+    .mobile-controls { display: flex; }
+  }
+  @media (pointer: coarse) {
+    .mobile-controls { display: flex; }
+  }
+
+  /* ── DDoS map background ── */
+  #map-bg {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    opacity: 0.07;
+    pointer-events: none;
+  }
+  body > .terminal, #snake-overlay {
+    position: relative;
+    z-index: 1;
+  }
+</style>
+</head>
+<body>
+<canvas id="map-bg"></canvas>
+<div class="terminal">
+  <div class="window-bar">
+    <span class="dot r"></span>
+    <span class="dot y"></span>
+    <span class="dot g"></span>
+    <span class="window-title">clay@morely — bash — 80×24</span>
+  </div>
+
+  <div class="pane" id="pane">
+    <div class="static-content">
+
+      <div class="cmd-line">
+        <div class="prompt">
+          <span class="user">clay</span><span class="at">@</span><span class="host">morely</span><span class="sep">:</span><span class="path">~</span><span class="sym"> $</span>
+          <span style="color:var(--green)">whoami</span>
+        </div>
+        <div class="output whoami-value">Claymorely</div>
+      </div>
+
+      <div class="cmd-line">
+        <div class="prompt">
+          <span class="user">clay</span><span class="at">@</span><span class="host">morely</span><span class="sep">:</span><span class="path">~</span><span class="sym"> $</span>
+          <span style="color:var(--green)">uptime</span>
+        </div>
+        <div class="output status-row">
+          <span class="status-dot"></span>
+          <span style="color:#c8f5b0">online &nbsp;·&nbsp; always somewhere on the internet</span>
+        </div>
+      </div>
+
+      <hr class="divider">
+
+      <div class="cmd-line">
+        <div class="prompt">
+          <span class="user">clay</span><span class="at">@</span><span class="host">morely</span><span class="sep">:</span><span class="path">~</span><span class="sym"> $</span>
+          <span style="color:var(--green)">cat</span> <span style="color:var(--green-dim)">about.txt</span>
+        </div>
+        <div class="output bio">
+hey, i'm clay.<br><br>
+i'm just someone who likes making things on the internet. i run a Discord server,
+mess around with bots, Minecraft mods and automations, and occasionally build
+random projects when an idea gets stuck in my head.<br><br>
+i'm always experimenting with something — sometimes it turns into an actual project,
+sometimes it doesn't. either way, i enjoy figuring things out and seeing what i
+can make work.<br><br>
+outside of that, i'm usually playing Minecraft, messing around with new tools,
+or just hanging around online.
+        </div>
+      </div>
+
+      <hr class="divider">
+
+      <div class="cmd-line">
+        <div class="prompt">
+          <span class="user">clay</span><span class="at">@</span><span class="host">morely</span><span class="sep">:</span><span class="path">~</span><span class="sym"> $</span>
+          <span style="color:var(--green)">ls</span> <span style="color:var(--green-dim)">-la links/</span>
+        </div>
+        <div class="output">
+          <div class="comment"># drwxr-xr-x  clay  morely  6 links</div>
+          <div class="ls-grid" style="margin-top:0.8rem;">
+            <div class="ls-item"><span class="ls-icon">[lnk]</span><a href="https://discord.gg/claymore" target="_blank" rel="noopener">discord</a></div>
+            <div class="ls-item"><span class="ls-icon">[lnk]</span><a href="https://github.com/claymorely" target="_blank" rel="noopener">github</a></div>
+            <div class="ls-item"><span class="ls-icon">[lnk]</span><a href="https://www.youtube.com/@claymorely" target="_blank" rel="noopener">youtube</a></div>
+            <div class="ls-item"><span class="ls-icon">[lnk]</span><a href="https://twitch.tv/claymorely" target="_blank" rel="noopener">twitch</a></div>
+            <div class="ls-item"><span class="ls-icon">[lnk]</span><a href="https://www.tiktok.com/@iclaymorely" target="_blank" rel="noopener">tiktok</a></div>
+            <div class="ls-item"><span class="ls-icon">[lnk]</span><a href="https://instagram.com/iclaymorely" target="_blank" rel="noopener">instagram</a></div>
+          </div>
+        </div>
+      </div>
+
+      <hr class="divider">
+    </div>
+
+    <!-- dynamic terminal output -->
+    <div id="terminal-output"></div>
+
+    <!-- live input row -->
+    <div id="input-row">
+      <span id="input-prompt"><span class="u">clay</span><span style="color:var(--green-dim)">@</span><span class="h">morely</span><span style="color:var(--green-dim)">:~$ </span></span>
+      <input id="input-field" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" autofocus>
+    </div>
+  </div>
+</div>
+
+<!-- Shared game overlay -->
+<div id="game-overlay">
+  <div id="game-header"></div>
+  <div id="game-score-display"></div>
+  <canvas id="game-canvas"></canvas>
+  <div class="mobile-controls" id="mobile-controls">
+    <div class="mobile-row"><button class="dpad" id="btn-up">▲</button></div>
+    <div class="mobile-row">
+      <button class="dpad" id="btn-left">◀</button>
+      <button class="dpad" id="btn-down">▼</button>
+      <button class="dpad" id="btn-right">▶</button>
+    </div>
+  </div>
+  <div id="game-footer"></div>
+</div>
+
+<script>
+// ── DDoS map background ─────────────────────────────────────────
+(function() {
+  const c = document.getElementById('map-bg');
+  const ctx = c.getContext('2d');
+
+  // High-resolution land bitmap: 120 cols × 60 rows (3-deg cells)
+  // Covers full globe: rows top=90°N → bot=90°S, cols left=180°W → right=180°E
+  const LAND = [
+    "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000000000000000000000000000000000000000000001100000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000000000000000000000000000000000000000011111110000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000000001100000000000000000000011111111111111110000000001111000000000000000000000000000000000000000000000",
+    "000000000000000001111111110000000000001110000111111111111111110000000111111100000000000000000000000000000000000000000000",
+    "000000000000000011111111111000000000111110011111111111111111100000001111111110000000000000000000000000000000000000000000",
+    "000000000000001111111111111100000011111111111111111111111111000000011111111110000000000000000000000000000000000000000000",
+    "000000000001111111111111111110000111111111111111111111111111100000001111111110000000000000000000000000000000000000000000",
+    "000000000111111111111111111111001111111111111111111111111111100000001111111110000000000000000000000000000000000000000000",
+    "000000001111111111111111111111111111111111111111111111111111110000011111111100000000000000000000000000000000000000000000",
+    "000000011111111111111111111111111111111111111111111111111111110000011111111100000000000000000000000000000000000000000000",
+    "000001111111111111111111111111111111111111111111111111111111100000011111111000000000000000000000000000000000000000000000",
+    "000001111111111111111111111111111111111111111111111111111111100000011111110000000000000000000000000000000000000000000000",
+    "000001111111111111111111111111111111111111111111111111111111110000011111100000000000000000000000000000000000000000000000",
+    "000001111111111111111111111111111111111111111111111111111111100000001111100000000000000000000000000000000000000000000000",
+    "000000111111111111111111111111111111111111111111111111111111100000001111100000000000000000000000000000000000000000000000",
+    "000000111111111111111111111111111111111111111111111111111111000000001111100000000000000000000000000000000000000000000000",
+    "000000011111111111111111111111111111111111111111111111111100000000001111000000000000000000000000000000000000000000000000",
+    "000000001111111111111111111111111111111111111111111111111100000000001111000000000000000000000000000000000000000000000000",
+    "000000001111111111111111111111111111111111111111111111111000000000001111000000000000000000000000000000000000000000000000",
+    "000000001111111111111111111111111111111111111111111111110000000000001110000000000000000000000000000000000000000000000000",
+    "000000000111111111111111111111111111111111111111111111100000000000001110000000000000000000000000000000000000000000000000",
+    "000000000011111111111111111111111111111111111111111111000000000000001100000000000000000000000000000000000000000000000000",
+    "000000000001111111111111111111111111111111111111111100000000000000001100000000000000000000000000000000000000000000000000",
+    "000000000001111111111111111111111111111111111111111000000000000000001100000000000000000000000000000000000000000000000000",
+    "000000000000111111111111111111111111111111111111110000000000000000001100000000000000000000000000000000000000000000000000",
+    "000000000000011111111111111111111111111111111111100000000000000000001100000000000000000000000000000000000000000000000000",
+    "000000000000011111111111111111111111111111111111000000000000000000001000000000000000000000000000000000000000000000000000",
+    "000000000000001111111111111111111111111111111110000000000000000000001000000000000000000000000000000000000000000000000000",
+    "000000000000001111111111111111111111111111111100000000000000000000001000000000000000000000000000000000000000000000000000",
+    "000000000000000111111111111111111111111111111000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000011111111111111111111111111100000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000001111111111111111111111111000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000011111111111111111111100000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000001111111111111111111000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000000011111111111111100000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000000001111111111111000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000000000011111111100000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000000000001111111100000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000000000000111111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000000000000011100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000000000000001100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+  ];
+
+  // Major city nodes (lat/lon) used as attack origins/targets
+  // [lat, lon] — roughly accurate positions
+  const CITIES = [
+    [51.5,  -0.1],   // London
+    [48.8,   2.3],   // Paris
+    [52.5,  13.4],   // Berlin
+    [55.7,  37.6],   // Moscow
+    [40.7, -74.0],   // New York
+    [37.7,-122.4],   // San Francisco
+    [41.8, -87.6],   // Chicago
+    [34.0,-118.2],   // Los Angeles
+    [35.6, 139.7],   // Tokyo
+    [39.9, 116.4],   // Beijing
+    [31.2, 121.5],   // Shanghai
+    [22.3, 114.2],   // Hong Kong
+    [1.3,  103.8],   // Singapore
+    [28.6,  77.2],   // New Delhi
+    [19.0,  72.8],   // Mumbai
+    [-33.9,  18.4],  // Cape Town
+    [-23.5, -46.6],  // São Paulo
+    [-34.6, -58.4],  // Buenos Aires
+    [6.5,    3.4],   // Lagos
+    [30.0,  31.2],   // Cairo
+    [43.6,  -79.4],  // Toronto
+    [45.5,  -73.6],  // Montreal
+    [59.9,  10.7],   // Oslo
+    [59.3,  18.1],   // Stockholm
+    [60.2,  25.0],   // Helsinki
+    [50.1,   8.7],   // Frankfurt
+    [48.2,  16.4],   // Vienna
+    [41.0,  29.0],   // Istanbul
+    [37.9,  23.7],   // Athens
+    [35.2,  33.4],   // Nicosia
+    [-37.8, 144.9],  // Melbourne
+    [-33.9, 151.2],  // Sydney
+    [37.5, 127.0],   // Seoul
+    [25.0,  55.3],   // Dubai
+    [24.7,  46.7],   // Riyadh
+  ];
+
+  const ROWS_M = LAND.length, COLS_M = LAND[0].length;
+
+  // Build land node list from bitmap
+  let landNodes = [];
+  for (let r = 0; r < ROWS_M; r++)
+    for (let cc = 0; cc < COLS_M; cc++)
+      if (LAND[r][cc] === '1') landNodes.push({ r, cc });
+
+  // Convert lat/lon to bitmap cell
+  function latLonToCell(lat, lon) {
+    const r  = Math.round((90 - lat)  / 180 * (ROWS_M - 1));
+    const cc = Math.round((lon + 180) / 360 * (COLS_M - 1));
+    return { r: Math.max(0,Math.min(ROWS_M-1,r)), cc: Math.max(0,Math.min(COLS_M-1,cc)) };
+  }
+
+  // Convert bitmap cell to canvas XY
+  function cellToXY(r, cc) {
+    return {
+      x: (cc / (COLS_M-1)) * c.width,
+      y: (r  / (ROWS_M-1)) * c.height
+    };
+  }
+
+  // Convert lat/lon directly to canvas XY
+  function latLonToXY(lat, lon) {
+    return {
+      x: ((lon + 180) / 360) * c.width,
+      y: ((90 - lat)  / 180) * c.height
+    };
+  }
+
+  // Pre-compute city canvas coords (updated on resize)
+  let cityXY = [];
+  function computeCityXY() {
+    cityXY = CITIES.map(([lat,lon]) => latLonToXY(lat, lon));
+  }
+
+  // Pre-render static map onto offscreen canvas
+  let mapCanvas = null;
+  function buildMapCache() {
+    mapCanvas = document.createElement('canvas');
+    mapCanvas.width  = c.width;
+    mapCanvas.height = c.height;
+    const mx = mapCanvas.getContext('2d');
+    const dotW = c.width  / COLS_M;
+    const dotH = c.height / ROWS_M;
+    const dotR = Math.min(dotW, dotH) * 0.38;
+    mx.fillStyle = '#1e4d10';
+    for (let r = 0; r < ROWS_M; r++) {
+      for (let cc = 0; cc < COLS_M; cc++) {
+        if (LAND[r][cc] === '1') {
+          const px = (cc + 0.5) * dotW;
+          const py = (r  + 0.5) * dotH;
+          mx.beginPath();
+          mx.arc(px, py, dotR, 0, Math.PI*2);
+          mx.fill();
+        }
+      }
+    }
+  }
+
+  let arcs = [];
+  let ripples = [];
+
+  function resize() {
+    c.width  = window.innerWidth;
+    c.height = window.innerHeight;
+    buildMapCache();
+    computeCityXY();
+  }
+
+  function randCity() {
+    return cityXY[Math.floor(Math.random() * cityXY.length)];
+  }
+
+  function spawnArc() {
+    const s = randCity();
+    const d = randCity();
+    if (s === d) return;
+    const dist = Math.hypot(d.x - s.x, d.y - s.y);
+    if (dist < 40) return;
+    const mx = (s.x + d.x) / 2;
+    const my = (s.y + d.y) / 2 - dist * (0.25 + Math.random() * 0.2);
+    const speed = 0.0018 + Math.random() * 0.0025;
+    arcs.push({ sx:s.x, sy:s.y, dx:d.x, dy:d.y, mx, my, t:0, speed, done:false });
+  }
+
+  function quadPt(ax,ay,bx,by,cx,cy,t) {
+    const u = 1-t;
+    return { x: u*u*ax + 2*u*t*bx + t*t*cx, y: u*u*ay + 2*u*t*by + t*t*cy };
+  }
+
+  let lastSpawn = 0;
+  function frame(ts) {
+    ctx.clearRect(0, 0, c.width, c.height);
+
+    // Draw cached map
+    if (mapCanvas) ctx.drawImage(mapCanvas, 0, 0);
+
+    // Spawn arcs
+    if (ts - lastSpawn > 600 + Math.random()*800 && arcs.length < 22) {
+      spawnArc();
+      lastSpawn = ts;
+    }
+
+    // Draw arcs
+    for (let i = arcs.length - 1; i >= 0; i--) {
+      const a = arcs[i];
+      a.t = Math.min(1, a.t + a.speed);
+
+      // Trail: draw segments with fading opacity near tail
+      const steps = 60;
+      for (let s = 0; s < steps; s++) {
+        const t0 = a.t * (s / steps);
+        const t1 = a.t * ((s+1) / steps);
+        if (t1 > a.t) break;
+        const p0 = quadPt(a.sx,a.sy,a.mx,a.my,a.dx,a.dy,t0);
+        const p1 = quadPt(a.sx,a.sy,a.mx,a.my,a.dx,a.dy,t1);
+        const alpha = (s / steps) * 0.55;
+        ctx.beginPath();
+        ctx.strokeStyle = `rgba(34,160,0,${alpha})`;
+        ctx.lineWidth = 0.5;
+        ctx.moveTo(p0.x, p0.y);
+        ctx.lineTo(p1.x, p1.y);
+        ctx.stroke();
+      }
+
+      // Head dot
+      const head = quadPt(a.sx,a.sy,a.mx,a.my,a.dx,a.dy,a.t);
+      ctx.beginPath();
+      ctx.arc(head.x, head.y, 1.2, 0, Math.PI*2);
+      ctx.fillStyle = 'rgba(57,255,20,0.9)';
+      ctx.fill();
+
+      // Origin dot
+      ctx.beginPath();
+      ctx.arc(a.sx, a.sy, 1.5, 0, Math.PI*2);
+      ctx.fillStyle = 'rgba(34,160,0,0.5)';
+      ctx.fill();
+
+      if (a.t >= 1) {
+        ripples.push({ x:a.dx, y:a.dy, r:0, maxR:10, alpha:0.7, speed:0.18 });
+        arcs.splice(i, 1);
+      }
+    }
+
+    // Draw city dots
+    for (const p of cityXY) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 1.5, 0, Math.PI*2);
+      ctx.fillStyle = 'rgba(57,255,20,0.3)';
+      ctx.fill();
+    }
+
+    // Draw ripples
+    for (let i = ripples.length - 1; i >= 0; i--) {
+      const rp = ripples[i];
+      rp.r += rp.speed;
+      rp.alpha *= 0.93;
+      ctx.beginPath();
+      ctx.arc(rp.x, rp.y, rp.r, 0, Math.PI*2);
+      ctx.strokeStyle = `rgba(57,255,20,${rp.alpha})`;
+      ctx.lineWidth = 0.6;
+      ctx.stroke();
+      if (rp.alpha < 0.02) ripples.splice(i, 1);
+    }
+
+    requestAnimationFrame(frame);
+  }
+
+  resize();
+  window.addEventListener('resize', () => { resize(); });
+
+  // Pre-seed
+  for (let i = 0; i < 8; i++) {
+    spawnArc();
+    if (arcs.length) arcs[arcs.length-1].t = Math.random() * 0.7;
+  }
+  requestAnimationFrame(frame);
+})();
+
+// ── Terminal logic ──────────────────────────────────────────────
+const output   = document.getElementById('terminal-output');
+const inputEl  = document.getElementById('input-field');
+const pane     = document.getElementById('pane');
+let snakeInstalled = false;
+let pendingInstall = false;
+let history = [];
+let histIdx = -1;
+
+pane.addEventListener('click', () => inputEl.focus());
+
+const PROMPT_HTML = `<span class="u">clay</span><span style="color:var(--green-dim)">@</span><span class="h">morely</span><span style="color:var(--green-dim)">:~$ </span>`;
+
+function appendLine(cmdText, responseHTML, cls='') {
+  const div = document.createElement('div');
+  div.className = 'hist-line';
+  div.innerHTML = `<div class="hist-prompt">${PROMPT_HTML}<span style="color:var(--green)">${escHtml(cmdText)}</span></div>`
+    + (responseHTML ? `<div class="hist-response ${cls}">${responseHTML}</div>` : '');
+  output.appendChild(div);
+  div.scrollIntoView({block:'end'});
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+const GAMES = {
+  snake:  { installed: false, version: '1.0.0', size: '0.04 MiB' },
+  pong:   { installed: false, version: '2.3.1', size: '0.06 MiB' },
+  tetris: { installed: false, version: '1.8.4', size: '0.09 MiB' },
+};
+
+const COMMANDS = {
+  help: () => `available commands:<br>
+  <span style="color:var(--green)">whoami</span>            — who is this?<br>
+  <span style="color:var(--green)">cat about.txt</span>     — read the bio<br>
+  <span style="color:var(--green)">ls links/</span>         — show all links<br>
+  <span style="color:var(--green)">uptime</span>            — status<br>
+  <span style="color:var(--green)">clear</span>             — clear terminal<br>
+  <span style="color:var(--green)">sudo pacman -S snake</span>  — classic snake<br>
+  <span style="color:var(--green)">sudo pacman -S pong</span>   — classic pong<br>
+  <span style="color:var(--green)">sudo pacman -S tetris</span> — tetris`,
+
+  whoami: () => `Claymorely`,
+
+  uptime: () => `<span class="status-dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);animation:pulse 2.2s ease-in-out infinite;vertical-align:middle;margin-right:6px"></span>online · always somewhere on the internet`,
+
+  'cat about.txt': () => `hey, i'm clay.\n\ni'm just someone who likes making things on the internet. i run a Discord server, mess around with bots, Minecraft mods and automations, and occasionally build random projects when an idea gets stuck in my head.\n\ni'm always experimenting with something — sometimes it turns into an actual project, sometimes it doesn't. either way, i enjoy figuring things out and seeing what i can make work.\n\noutside of that, i'm usually playing Minecraft, messing around with new tools, or just hanging around online.`,
+
+  'ls links/': () => `<span style="color:var(--green-dim)"># drwxr-xr-x  clay  morely  6 links</span><br><br>
+discord    → <a href="https://discord.gg/claymore" target="_blank" style="color:var(--green)">discord.gg/claymore</a><br>
+github     → <a href="https://github.com/claymorely" target="_blank" style="color:var(--green)">github.com/claymorely</a><br>
+youtube    → <a href="https://www.youtube.com/@claymorely" target="_blank" style="color:var(--green)">youtube.com/@claymorely</a><br>
+twitch     → <a href="https://twitch.tv/claymorely" target="_blank" style="color:var(--green)">twitch.tv/claymorely</a><br>
+tiktok     → <a href="https://www.tiktok.com/@iclaymorely" target="_blank" style="color:var(--green)">tiktok.com/@iclaymorely</a><br>
+instagram  → <a href="https://instagram.com/iclaymorely" target="_blank" style="color:var(--green)">instagram.com/iclaymorely</a>`,
+
+  'ls -la links/': () => COMMANDS['ls links/'](),
+
+  'sudo pacman -S snake':  () => installCommand('snake'),
+  'sudo pacman -S pong':   () => installCommand('pong'),
+  'sudo pacman -S tetris': () => installCommand('tetris'),
+
+  snake:  () => launchGame('snake'),
+  pong:   () => launchGame('pong'),
+  tetris: () => launchGame('tetris'),
+
+  neofetch: () => `<span style="color:var(--green)">clay@morely</span><br>-----------<br>OS: clayOS Linux<br>Shell: bash<br>WM: discord<br>Projects: too many<br>Status: always online`,
+  'echo hello': () => `hello`,
+  clear: () => { output.innerHTML = ''; return null; },
+  '': () => null,
+};
+
+function installCommand(game) {
+  const g = GAMES[game];
+  if (g.installed) return `warning: ${game}-${g.version} is up to date -- reinstalling\ntype <span style="color:var(--green)">${game}</span> to play.`;
+  pendingInstall = game;
+  inputEl.placeholder = '[Y/n]';
+  return `resolving dependencies...\nlooking for conflicting packages...\n\nPackages (1)  ${game}-${g.version}\n\nTotal Download Size:   ${g.size}\nTotal Installed Size:  ${g.size}\n\n:: Proceed with installation? [Y/n]`;
+}
+
+function launchGame(game) {
+  if (!GAMES[game].installed) return null; // gate handled in runCommand
+  setTimeout(() => openGame(game), 100);
+  return `launching ${game}...`;
+}
+
+function runCommand(raw) {
+  const cmd = raw.trim();
+  if (cmd === 'clear') { output.innerHTML = ''; return; }
+
+  // Game gate: not installed
+  for (const g of ['snake','pong','tetris']) {
+    if (cmd === g && !GAMES[g].installed) {
+      appendLine(cmd, `bash: ${g}: command not found\nhint: try <span style="color:var(--green)">sudo pacman -S ${g}</span> first`, 'err');
+      return;
+    }
+  }
+
+  if (COMMANDS[cmd]) {
+    const res = COMMANDS[cmd]();
+    if (res !== null) appendLine(cmd, res);
+    else if (res === null && cmd !== '') appendLine(cmd, '');
+    return;
+  }
+
+  appendLine(cmd, `bash: ${escHtml(cmd)}: command not found\ntype <span style="color:var(--green)">help</span> for available commands`, 'err');
+}
+
+// ── Install system ──────────────────────────────────────────────
+function runInstall(game) {
+  inputEl.disabled = true;
+  inputEl.placeholder = '';
+  const g = GAMES[game];
+
+  const installDiv = document.createElement('div');
+  installDiv.className = 'hist-line';
+  const responseDiv = document.createElement('div');
+  responseDiv.className = 'hist-response';
+  responseDiv.style.whiteSpace = 'pre';
+  installDiv.appendChild(responseDiv);
+  output.appendChild(installDiv);
+
+  const steps = [
+    { delay: 400,  text: ':: Verifying package integrity...' },
+    { delay: 850,  text: ':: Checking keyring...' },
+    { delay: 700,  text: `:: Fetching ${game}-${g.version}.pkg.tar.zst` },
+    { delay: 1200, text: '', bar: true, game },
+    { delay: 400,  text: `\n✓ ${game}-${g.version} installed successfully.\n  type <span style="color:#39ff14">${game}</span> to play.`, done: true, game },
+  ];
+
+  let current = '';
+  let stepIdx = 0;
+
+  function nextStep() {
+    if (stepIdx >= steps.length) return;
+    const s = steps[stepIdx++];
+    setTimeout(() => {
+      if (s.bar) {
+        animateBar(responseDiv, current, game, () => {
+          current = responseDiv.innerHTML;
+          nextStep();
+        });
+      } else {
+        current += (current ? '\n' : '') + s.text;
+        responseDiv.innerHTML = current;
+        if (s.done) {
+          GAMES[game].installed = true;
+          inputEl.disabled = false;
+          inputEl.focus();
+        }
+        installDiv.scrollIntoView({ block: 'end' });
+        nextStep();
+      }
+    }, s.delay);
+  }
+  nextStep();
+}
+
+function animateBar(el, currentText, game, onDone) {
+  const totalBlocks = 20;
+  let filled = 0;
+  const prefix = currentText ? currentText + '\n' : '';
+  const label = `installing ${game}`;
+  const pad = ' '.repeat(Math.max(0, 22 - label.length));
+
+  const iv = setInterval(() => {
+    filled++;
+    const bar = '#'.repeat(filled) + '-'.repeat(totalBlocks - filled);
+    const pct = Math.round((filled / totalBlocks) * 100);
+    el.innerHTML = prefix + `(1/1) ${label}${pad}[<span style="color:#39ff14">${bar}</span>] ${pct}%`;
+    el.scrollIntoView({ block: 'end' });
+    if (filled >= totalBlocks) {
+      clearInterval(iv);
+      setTimeout(onDone, 200);
+    }
+  }, 95);
+}
+
+inputEl.addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    const val = inputEl.value.trim();
+
+    if (pendingInstall) {
+      const game = pendingInstall;
+      pendingInstall = null;
+      inputEl.placeholder = '';
+      if (val === '' || val.toLowerCase() === 'y') {
+        const confirmDiv = document.createElement('div');
+        confirmDiv.className = 'hist-line';
+        confirmDiv.innerHTML = `<div class="hist-prompt" style="color:var(--green-dim);padding-left:1ch"><span style="color:var(--green)">${escHtml(val || 'Y')}</span></div>`;
+        output.appendChild(confirmDiv);
+        inputEl.value = '';
+        runInstall(game);
+      } else {
+        appendLine(val, `<span style="color:var(--green-dim)"># installation aborted.</span>`, 'sys');
+        inputEl.value = '';
+      }
+      return;
+    }
+
+    history.unshift(val);
+    histIdx = -1;
+    runCommand(val);
+    inputEl.value = '';
+    e.preventDefault();
+  }
+  if (pendingInstall) return;
+  if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (histIdx < history.length - 1) { histIdx++; inputEl.value = history[histIdx]; }
+  }
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    if (histIdx > 0) { histIdx--; inputEl.value = history[histIdx]; }
+    else { histIdx = -1; inputEl.value = ''; }
+  }
+});
+
+// ── Shared game overlay ─────────────────────────────────────────
+const gameOverlay   = document.getElementById('game-overlay');
+const gameHeader    = document.getElementById('game-header');
+const gameScore     = document.getElementById('game-score-display');
+const gameCanvas    = document.getElementById('game-canvas');
+const gameFooter    = document.getElementById('game-footer');
+const mobileControls = document.getElementById('mobile-controls');
+const gctx          = gameCanvas.getContext('2d');
+
+const G  = '#39ff14';
+const GD = '#22a000';
+const GF = '#145c00';
+const BG = '#0a0a0a';
+
+let activeGame = null;
+let gameAnimFrame = null;
+
+function openGame(name) {
+  activeGame = name;
+  gameOverlay.classList.add('active');
+  document.body.style.overflow = 'hidden';
+  mobileControls.style.display = 'none';
+  if (name === 'snake')  initSnake();
+  if (name === 'pong')   initPong();
+  if (name === 'tetris') initTetris();
+}
+
+function closeGame() {
+  gameOverlay.classList.remove('active');
+  document.body.style.overflow = '';
+  if (gameAnimFrame) { cancelAnimationFrame(gameAnimFrame); gameAnimFrame = null; }
+  const name = activeGame;
+  activeGame = null;
+  appendLine('', `<span style="color:var(--green-dim)"># ${name} exited.</span>`, 'sys');
+  setTimeout(() => inputEl.focus(), 50);
+}
+
+document.addEventListener('keydown', e => {
+  if (!gameOverlay.classList.contains('active')) return;
+  if (e.key === 'q' || e.key === 'Q') { closeGame(); return; }
+  if (activeGame === 'snake')  snakeKey(e);
+  if (activeGame === 'pong')   pongKey(e);
+  if (activeGame === 'tetris') tetrisKey(e);
+});
+
+document.getElementById('btn-up').addEventListener('click',    () => dpad('up'));
+document.getElementById('btn-down').addEventListener('click',  () => dpad('down'));
+document.getElementById('btn-left').addEventListener('click',  () => dpad('left'));
+document.getElementById('btn-right').addEventListener('click', () => dpad('right'));
+
+function dpad(dir) {
+  if (!gameOverlay.classList.contains('active')) return;
+  if (activeGame === 'snake')  snakeDpad(dir);
+  if (activeGame === 'pong')   pongDpad(dir);
+  if (activeGame === 'tetris') tetrisDpad(dir);
+}
+
+// ══════════════════════════════════════════════════════
+//  SNAKE
+// ══════════════════════════════════════════════════════
+const S_CELL = 16, S_COLS = 25, S_ROWS = 20;
+let snakeBody, snakeDir, snakeNext, snakeFood, snakeScore, snakeHi = 0, snakeLoop, snakeStarted, snakeDead;
+
+function initSnake() {
+  gameCanvas.width  = S_COLS * S_CELL;
+  gameCanvas.height = S_ROWS * S_CELL;
+  gameHeader.innerHTML = `snake v1.0.0 — installed via pacman<br><span>arrow keys</span> or <span>WASD</span> to move &nbsp;·&nbsp; <span>Q</span> to quit`;
+  gameFooter.innerHTML = `<span>press any arrow key to start</span>`;
+  mobileControls.style.display = 'flex';
+
+  snakeBody    = [{x:12,y:10},{x:11,y:10},{x:10,y:10}];
+  snakeDir     = {x:1,y:0};
+  snakeNext    = {x:1,y:0};
+  snakeScore   = 0;
+  snakeDead    = false;
+  snakeStarted = false;
+  snakeFood    = snakeRandFood();
+  gameScore.textContent = `score: 0  ·  hi: ${snakeHi}`;
+  snakeDraw();
+}
+
+function snakeRandFood() {
+  let p;
+  do { p = {x:Math.floor(Math.random()*S_COLS), y:Math.floor(Math.random()*S_ROWS)}; }
+  while (snakeBody.some(s=>s.x===p.x&&s.y===p.y));
+  return p;
+}
+
+function snakeDraw() {
+  gctx.fillStyle = BG;
+  gctx.fillRect(0,0,gameCanvas.width,gameCanvas.height);
+  gctx.fillStyle = GF;
+  for (let x=0;x<S_COLS;x++) for (let y=0;y<S_ROWS;y++)
+    gctx.fillRect(x*S_CELL+S_CELL/2-1, y*S_CELL+S_CELL/2-1, 1, 1);
+  gctx.fillStyle = G; gctx.shadowColor = G; gctx.shadowBlur = 8;
+  gctx.fillRect(snakeFood.x*S_CELL+2, snakeFood.y*S_CELL+2, S_CELL-4, S_CELL-4);
+  gctx.shadowBlur = 0;
+  snakeBody.forEach((seg,i) => {
+    gctx.fillStyle = i===0 ? G : GD;
+    gctx.globalAlpha = i===0 ? 1 : Math.max(0.25, 1-i/snakeBody.length);
+    const p = i===0?1:2;
+    gctx.fillRect(seg.x*S_CELL+p, seg.y*S_CELL+p, S_CELL-p*2, S_CELL-p*2);
+  });
+  gctx.globalAlpha = 1;
+  if (snakeDead) {
+    gctx.fillStyle = 'rgba(0,0,0,0.6)';
+    gctx.fillRect(0,0,gameCanvas.width,gameCanvas.height);
+    gctx.fillStyle = G; gctx.font = `bold 16px 'JetBrains Mono',monospace`; gctx.textAlign='center';
+    gctx.fillText('GAME OVER', gameCanvas.width/2, gameCanvas.height/2-10);
+    gctx.fillStyle = GD; gctx.font = `12px 'JetBrains Mono',monospace`;
+    gctx.fillText(`score: ${snakeScore}  ·  R to restart`, gameCanvas.width/2, gameCanvas.height/2+14);
+    gctx.textAlign='left';
+  }
+}
+
+function snakeTick() {
+  snakeDir = snakeNext;
+  const head = {x:snakeBody[0].x+snakeDir.x, y:snakeBody[0].y+snakeDir.y};
+  if (head.x<0||head.x>=S_COLS||head.y<0||head.y>=S_ROWS||snakeBody.some(s=>s.x===head.x&&s.y===head.y)) {
+    snakeDead = true; clearInterval(snakeLoop); snakeLoop=null;
+    if (snakeScore>snakeHi) snakeHi=snakeScore;
+    gameFooter.innerHTML = `<span>R</span> to restart &nbsp;·&nbsp; <span>Q</span> to quit`;
+    snakeDraw(); return;
+  }
+  snakeBody.unshift(head);
+  if (head.x===snakeFood.x && head.y===snakeFood.y) {
+    snakeScore++; gameScore.textContent=`score: ${snakeScore}  ·  hi: ${snakeHi}`;
+    if (snakeScore>snakeHi) snakeHi=snakeScore;
+    snakeFood = snakeRandFood();
+  } else snakeBody.pop();
+  snakeDraw();
+}
+
+const SNAKE_DIRS = {
+  ArrowUp:{x:0,y:-1},ArrowDown:{x:0,y:1},ArrowLeft:{x:-1,y:0},ArrowRight:{x:1,y:0},
+  w:{x:0,y:-1},s:{x:0,y:1},a:{x:-1,y:0},d:{x:1,y:0},
+  W:{x:0,y:-1},S:{x:0,y:1},A:{x:-1,y:0},D:{x:1,y:0},
+};
+
+function snakeKey(e) {
+  if (snakeDead) { if (e.key==='r'||e.key==='R') { clearInterval(snakeLoop); snakeLoop=null; initSnake(); } return; }
+  const d = SNAKE_DIRS[e.key];
+  if (d) {
+    e.preventDefault();
+    if (!snakeStarted) { snakeStarted=true; gameFooter.innerHTML=`<span>Q</span> to quit`; snakeLoop=setInterval(snakeTick,120); }
+    if (!(d.x===-snakeDir.x && d.y===-snakeDir.y)) snakeNext=d;
+  }
+}
+function snakeDpad(dir) {
+  if (snakeDead) return;
+  const map = {up:{x:0,y:-1},down:{x:0,y:1},left:{x:-1,y:0},right:{x:1,y:0}};
+  const d = map[dir]; if (!d) return;
+  if (!snakeStarted) { snakeStarted=true; gameFooter.innerHTML=`<span>Q</span> to quit`; snakeLoop=setInterval(snakeTick,120); }
+  if (!(d.x===-snakeDir.x && d.y===-snakeDir.y)) snakeNext=d;
+}
+
+// ══════════════════════════════════════════════════════
+//  PONG
+// ══════════════════════════════════════════════════════
+const P_W=480, P_H=280, P_PAD_W=8, P_PAD_H=52, P_BALL=7;
+let pongState;
+
+function initPong() {
+  gameCanvas.width=P_W; gameCanvas.height=P_H;
+  gameHeader.innerHTML=`pong v2.3.1 — installed via pacman<br><span>W/S</span> left paddle &nbsp;·&nbsp; <span>↑/↓</span> right paddle &nbsp;·&nbsp; <span>Q</span> to quit`;
+  gameFooter.innerHTML=`<span>press space to start</span>`;
+  mobileControls.style.display='none';
+  pongState = {
+    lp:P_H/2, rp:P_H/2,
+    bx:P_W/2, by:P_H/2,
+    bvx:0, bvy:0,
+    ls:0, rs:0,
+    started:false, paused:false,
+    lup:false, ldn:false, rup:false, rdn:false,
+  };
+  gameScore.textContent='0 — 0';
+  pongDraw();
+  if (gameAnimFrame) cancelAnimationFrame(gameAnimFrame);
+  gameAnimFrame = requestAnimationFrame(pongLoop);
+}
+
+function pongServeBall(toRight) {
+  const spd = 3.5;
+  pongState.bx = P_W/2; pongState.by = P_H/2;
+  const angle = (Math.random()*0.6-0.3);
+  pongState.bvx = (toRight ? 1 : -1) * spd * Math.cos(angle);
+  pongState.bvy = spd * Math.sin(angle);
+}
+
+function pongLoop() {
+  if (activeGame !== 'pong') return;
+  const ps = pongState;
+  if (ps.started && !ps.paused) {
+    const spd=4.5;
+    if (ps.lup) ps.lp=Math.max(P_PAD_H/2, ps.lp-spd);
+    if (ps.ldn) ps.lp=Math.min(P_H-P_PAD_H/2, ps.lp+spd);
+    if (ps.rup) ps.rp=Math.max(P_PAD_H/2, ps.rp-spd);
+    if (ps.rdn) ps.rp=Math.min(P_H-P_PAD_H/2, ps.rp+spd);
+
+    ps.bx+=ps.bvx; ps.by+=ps.bvy;
+
+    // top/bottom bounce
+    if (ps.by-P_BALL/2<0) { ps.by=P_BALL/2; ps.bvy*=-1; }
+    if (ps.by+P_BALL/2>P_H) { ps.by=P_H-P_BALL/2; ps.bvy*=-1; }
+
+    // left paddle
+    const lx=P_PAD_W+4;
+    if (ps.bx-P_BALL/2<=lx+P_PAD_W && ps.bvx<0 && ps.by>=ps.lp-P_PAD_H/2-P_BALL && ps.by<=ps.lp+P_PAD_H/2+P_BALL) {
+      ps.bvx=Math.abs(ps.bvx)*1.05; ps.bvx=Math.min(ps.bvx,9);
+      ps.bvy+=(ps.by-ps.lp)/P_PAD_H*3;
+      ps.bx=lx+P_PAD_W+P_BALL/2;
+    }
+    // right paddle
+    const rx=P_W-P_PAD_W-4;
+    if (ps.bx+P_BALL/2>=rx && ps.bvx>0 && ps.by>=ps.rp-P_PAD_H/2-P_BALL && ps.by<=ps.rp+P_PAD_H/2+P_BALL) {
+      ps.bvx=-Math.abs(ps.bvx)*1.05; ps.bvx=Math.max(ps.bvx,-9);
+      ps.bvy+=(ps.by-ps.rp)/P_PAD_H*3;
+      ps.bx=rx-P_BALL/2;
+    }
+
+    // score
+    if (ps.bx<0) { ps.rs++; gameScore.textContent=`${ps.ls} — ${ps.rs}`; pongServeBall(true); }
+    if (ps.bx>P_W) { ps.ls++; gameScore.textContent=`${ps.ls} — ${ps.rs}`; pongServeBall(false); }
+  }
+  pongDraw();
+  gameAnimFrame = requestAnimationFrame(pongLoop);
+}
+
+function pongDraw() {
+  const ps = pongState;
+  gctx.fillStyle=BG; gctx.fillRect(0,0,P_W,P_H);
+  // centre line
+  gctx.setLineDash([6,6]); gctx.strokeStyle=GF; gctx.lineWidth=1;
+  gctx.beginPath(); gctx.moveTo(P_W/2,0); gctx.lineTo(P_W/2,P_H); gctx.stroke();
+  gctx.setLineDash([]);
+  // paddles
+  gctx.fillStyle=G;
+  gctx.fillRect(P_PAD_W, ps.lp-P_PAD_H/2, P_PAD_W, P_PAD_H);
+  gctx.fillRect(P_W-P_PAD_W*2, ps.rp-P_PAD_H/2, P_PAD_W, P_PAD_H);
+  // ball
+  if (ps.started) {
+    gctx.fillStyle=G; gctx.shadowColor=G; gctx.shadowBlur=10;
+    gctx.beginPath(); gctx.arc(ps.bx,ps.by,P_BALL/2,0,Math.PI*2); gctx.fill();
+    gctx.shadowBlur=0;
+  }
+  if (!ps.started) {
+    gctx.fillStyle=GD; gctx.font=`12px 'JetBrains Mono',monospace`; gctx.textAlign='center';
+    gctx.fillText('press SPACE to start', P_W/2, P_H/2);
+    gctx.textAlign='left';
+  }
+}
+
+function pongKey(e) {
+  const ps = pongState;
+  if (e.key===' ') { e.preventDefault(); if (!ps.started) { ps.started=true; gameFooter.innerHTML=`<span>Q</span> to quit`; pongServeBall(true); } return; }
+  if (e.key==='w'||e.key==='W') ps.lup=true;
+  if (e.key==='s'||e.key==='S') ps.ldn=true;
+  if (e.key==='ArrowUp') { e.preventDefault(); ps.rup=true; }
+  if (e.key==='ArrowDown') { e.preventDefault(); ps.rdn=true; }
+}
+document.addEventListener('keyup', e => {
+  if (activeGame!=='pong') return;
+  const ps=pongState;
+  if (e.key==='w'||e.key==='W') ps.lup=false;
+  if (e.key==='s'||e.key==='S') ps.ldn=false;
+  if (e.key==='ArrowUp') ps.rup=false;
+  if (e.key==='ArrowDown') ps.rdn=false;
+});
+function pongDpad(dir) {
+  const ps=pongState; if (!ps) return;
+  if (!ps.started) { ps.started=true; gameFooter.innerHTML=`<span>Q</span> to quit`; pongServeBall(true); }
+  if (dir==='up') ps.rup=true;
+  if (dir==='down') ps.rdn=true;
+}
+
+// ══════════════════════════════════════════════════════
+//  TETRIS
+// ══════════════════════════════════════════════════════
+const T_COLS=10, T_ROWS=20, T_CELL=24;
+const PIECES = [
+  { shape:[[1,1,1,1]],           color:G },    // I
+  { shape:[[1,1],[1,1]],         color:'#39ff14' }, // O
+  { shape:[[0,1,0],[1,1,1]],     color:GD },   // T
+  { shape:[[1,0,0],[1,1,1]],     color:G },    // L
+  { shape:[[0,0,1],[1,1,1]],     color:GD },   // J
+  { shape:[[0,1,1],[1,1,0]],     color:G },    // S
+  { shape:[[1,1,0],[0,1,1]],     color:GD },   // Z
+];
+
+let tetBoard, tetPiece, tetNext, tetScore, tetHi=0, tetLines, tetLevel, tetDropTimer, tetLastDrop, tetDead;
+
+function initTetris() {
+  gameCanvas.width  = T_COLS*T_CELL + 80;
+  gameCanvas.height = T_ROWS*T_CELL;
+  gameHeader.innerHTML=`tetris v1.8.4 — installed via pacman<br><span>←/→</span> move &nbsp;·&nbsp; <span>↑</span> rotate &nbsp;·&nbsp; <span>↓</span> soft drop &nbsp;·&nbsp; <span>Q</span> quit`;
+  gameFooter.innerHTML=`<span>Q</span> to quit`;
+  mobileControls.style.display='flex';
+  tetBoard=Array.from({length:T_ROWS},()=>Array(T_COLS).fill(0));
+  tetScore=0; tetLines=0; tetLevel=1; tetDead=false;
+  tetNext=randPiece();
+  tetSpawn();
+  gameScore.textContent=`score: 0  ·  lines: 0  ·  hi: ${tetHi}`;
+  if (gameAnimFrame) cancelAnimationFrame(gameAnimFrame);
+  tetLastDrop=performance.now();
+  gameAnimFrame=requestAnimationFrame(tetLoop);
+}
+
+function randPiece() { return JSON.parse(JSON.stringify(PIECES[Math.floor(Math.random()*PIECES.length)])); }
+
+function tetSpawn() {
+  tetPiece = tetNext;
+  tetNext = randPiece();
+  tetPiece.x = Math.floor((T_COLS - tetPiece.shape[0].length)/2);
+  tetPiece.y = 0;
+  if (!tetValid(tetPiece, 0, 0)) { tetDead=true; if(tetScore>tetHi)tetHi=tetScore; }
+}
+
+function tetValid(p, dx, dy, shape) {
+  const s = shape || p.shape;
+  for (let r=0;r<s.length;r++) for (let c=0;c<s[r].length;c++) {
+    if (!s[r][c]) continue;
+    const nx=p.x+c+dx, ny=p.y+r+dy;
+    if (nx<0||nx>=T_COLS||ny>=T_ROWS) return false;
+    if (ny>=0 && tetBoard[ny][nx]) return false;
+  }
+  return true;
+}
+
+function tetRotate(p) {
+  const s=p.shape, rs=s[0].map((_,i)=>s.map(r=>r[i]).reverse());
+  if (tetValid(p,0,0,rs)) { p.shape=rs; return; }
+  if (tetValid(p,1,0,rs)) { p.shape=rs; p.x+=1; return; }
+  if (tetValid(p,-1,0,rs)) { p.shape=rs; p.x-=1; }
+}
+
+function tetLock() {
+  tetPiece.shape.forEach((row,r)=>row.forEach((v,c)=>{ if(v) tetBoard[tetPiece.y+r][tetPiece.x+c]=tetPiece.color||G; }));
+  let cleared=0;
+  for (let r=T_ROWS-1;r>=0;) {
+    if (tetBoard[r].every(v=>v)) { tetBoard.splice(r,1); tetBoard.unshift(Array(T_COLS).fill(0)); cleared++; }
+    else r--;
+  }
+  if (cleared) {
+    const pts=[0,100,300,500,800][cleared]*tetLevel;
+    tetScore+=pts; tetLines+=cleared;
+    tetLevel=Math.floor(tetLines/10)+1;
+    if (tetScore>tetHi) tetHi=tetScore;
+    gameScore.textContent=`score: ${tetScore}  ·  lines: ${tetLines}  ·  hi: ${tetHi}`;
+  }
+  tetSpawn();
+}
+
+function tetDrop() {
+  if (tetValid(tetPiece,0,1)) tetPiece.y++;
+  else tetLock();
+}
+
+function tetLoop(ts) {
+  if (activeGame!=='tetris') return;
+  if (!tetDead) {
+    const interval=Math.max(80, 500-tetLevel*40);
+    if (ts-tetLastDrop>interval) { tetDrop(); tetLastDrop=ts; }
+  }
+  tetDraw();
+  if (!tetDead) gameAnimFrame=requestAnimationFrame(tetLoop);
+  else {
+    gctx.fillStyle='rgba(0,0,0,0.65)'; gctx.fillRect(0,0,gameCanvas.width,gameCanvas.height);
+    gctx.fillStyle=G; gctx.font=`bold 16px 'JetBrains Mono',monospace`; gctx.textAlign='center';
+    gctx.fillText('GAME OVER', gameCanvas.width/2, gameCanvas.height/2-12);
+    gctx.fillStyle=GD; gctx.font=`12px 'JetBrains Mono',monospace`;
+    gctx.fillText('R to restart · Q to quit', gameCanvas.width/2, gameCanvas.height/2+12);
+    gctx.textAlign='left';
+  }
+}
+
+function tetDraw() {
+  const TW=T_COLS*T_CELL, PW=80;
+  gctx.fillStyle=BG; gctx.fillRect(0,0,gameCanvas.width,gameCanvas.height);
+  // grid
+  gctx.strokeStyle=GF; gctx.lineWidth=0.5;
+  for(let c=0;c<=T_COLS;c++){gctx.beginPath();gctx.moveTo(c*T_CELL,0);gctx.lineTo(c*T_CELL,T_ROWS*T_CELL);gctx.stroke();}
+  for(let r=0;r<=T_ROWS;r++){gctx.beginPath();gctx.moveTo(0,r*T_CELL);gctx.lineTo(TW,r*T_CELL);gctx.stroke();}
+  // board
+  tetBoard.forEach((row,r)=>row.forEach((v,c)=>{
+    if(v){gctx.fillStyle=v;gctx.fillRect(c*T_CELL+1,r*T_CELL+1,T_CELL-2,T_CELL-2);}
+  }));
+  // ghost
+  let gy=0;
+  while(tetValid(tetPiece,0,gy+1)) gy++;
+  tetPiece.shape.forEach((row,r)=>row.forEach((v,c)=>{
+    if(v){gctx.fillStyle='rgba(57,255,20,0.12)';gctx.fillRect((tetPiece.x+c)*T_CELL+1,(tetPiece.y+r+gy)*T_CELL+1,T_CELL-2,T_CELL-2);}
+  }));
+  // active piece
+  tetPiece.shape.forEach((row,r)=>row.forEach((v,c)=>{
+    if(v){gctx.fillStyle=G;gctx.fillRect((tetPiece.x+c)*T_CELL+1,(tetPiece.y+r)*T_CELL+1,T_CELL-2,T_CELL-2);}
+  }));
+  // sidebar
+  gctx.fillStyle=GF; gctx.fillRect(TW,0,1,T_ROWS*T_CELL);
+  gctx.fillStyle=GD; gctx.font=`10px 'JetBrains Mono',monospace`;
+  gctx.fillText('NEXT',TW+10,20);
+  const ns=tetNext.shape, noff=TW+10;
+  ns.forEach((row,r)=>row.forEach((v,c)=>{
+    if(v){gctx.fillStyle=G;gctx.fillRect(noff+c*14,30+r*14,12,12);}
+  }));
+}
+
+function tetrisKey(e) {
+  if (tetDead) { if (e.key==='r'||e.key==='R') initTetris(); return; }
+  if (e.key==='ArrowLeft') { e.preventDefault(); if(tetValid(tetPiece,-1,0))tetPiece.x--; }
+  if (e.key==='ArrowRight') { e.preventDefault(); if(tetValid(tetPiece,1,0))tetPiece.x++; }
+  if (e.key==='ArrowDown') { e.preventDefault(); tetDrop(); tetLastDrop=performance.now(); }
+  if (e.key==='ArrowUp') { e.preventDefault(); tetRotate(tetPiece); }
+  if (e.key===' ') { e.preventDefault(); while(tetValid(tetPiece,0,1))tetPiece.y++; tetLock(); }
+}
+function tetrisDpad(dir) {
+  if (tetDead) return;
+  if (dir==='left')  { if(tetValid(tetPiece,-1,0))tetPiece.x--; }
+  if (dir==='right') { if(tetValid(tetPiece,1,0))tetPiece.x++; }
+  if (dir==='down')  { tetDrop(); tetLastDrop=performance.now(); }
+  if (dir==='up')    { tetRotate(tetPiece); }
+}
+</script>
+</body>
+</html>
